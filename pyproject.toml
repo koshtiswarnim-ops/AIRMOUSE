@@ -1,0 +1,14 @@
+[tool.vercel]
+entrypoint = "web_server:app"
+
+[project]
+name = "airmouse-ai"
+version = "1.0.0"
+description = "AIRMOUSE AI — Futuristic Gesture-Controlled Computer System"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "flask>=3.0.0",
+    "numpy>=1.24.0,<2.0.0",
+    "pillow>=10.0.0",
+]

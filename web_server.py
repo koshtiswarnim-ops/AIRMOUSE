@@ -13,29 +13,80 @@ from datetime import datetime
 from collections import deque
 from typing import Optional
 
-import cv2
+try:
+    import cv2
+except Exception:
+    cv2 = None
+
 import numpy as np
 from flask import Flask, Response, jsonify, request, render_template_string
 
 from settings import AppSettings
-from hand_tracker import HandTracker
-from gesture_recognizer import GestureRecognizer, GestureType
-from mouse_controller import MouseController
+
+# Detect cloud/serverless deployment (Vercel, AWS Lambda)
+IS_CLOUD_DEPLOYMENT = bool(
+    os.environ.get("VERCEL")
+    or os.environ.get("VERCEL_ENV")
+    or os.environ.get("AWS_LAMBDA_FUNCTION_NAME")
+    or os.environ.get("NOW_REGION")
+)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("AIRMOUSE-WEB")
 
 app = Flask(__name__)
 
-# Application Core Instances
+# Application Core Settings
 settings = AppSettings()
-tracker = HandTracker(
-    camera_index=settings.camera_index,
-    width=settings.camera_width,
-    height=settings.camera_height,
-)
-recognizer = GestureRecognizer()
-mouse_ctrl = MouseController(settings)
+
+# Desktop components initialized lazily on local execution
+tracker = None
+recognizer = None
+mouse_ctrl = None
+GestureType = None
+
+
+def init_desktop_components() -> bool:
+    """Safely initialize local desktop camera and mouse controllers."""
+    global tracker, recognizer, mouse_ctrl, GestureType
+    if IS_CLOUD_DEPLOYMENT:
+        return False
+
+    try:
+        from gesture_recognizer import GestureRecognizer, GestureType as GT
+        GestureType = GT
+        if recognizer is None:
+            recognizer = GestureRecognizer()
+    except Exception as e:
+        logger.warning(f"GestureRecognizer deferred: {e}")
+
+    try:
+        from hand_tracker import HandTracker
+        if tracker is None:
+            tracker = HandTracker(
+                camera_index=settings.camera_index,
+                width=settings.camera_width,
+                height=settings.camera_height,
+            )
+    except Exception as e:
+        logger.warning(f"HandTracker deferred: {e}")
+
+    try:
+        from mouse_controller import MouseController
+        if mouse_ctrl is None:
+            mouse_ctrl = MouseController(settings)
+    except Exception as e:
+        logger.warning(f"MouseController deferred: {e}")
+
+    return tracker is not None
+
+
+# Initialize on local desktop startup (kept out of Vercel serverless startup)
+if not IS_CLOUD_DEPLOYMENT:
+    try:
+        init_desktop_components()
+    except Exception as e:
+        logger.warning(f"Local desktop initialization deferred: {e}")
 
 # Global State
 is_camera_active = False
@@ -56,44 +107,72 @@ def log_event(message: str) -> None:
     event_logs.append(f"[{ts}] {message}")
 
 
-log_event("AIRMOUSE AI Web Core initialized.")
-log_event("Mouse control is STANDBY (Safe mode).")
+if IS_CLOUD_DEPLOYMENT:
+    log_event("AIRMOUSE AI Cloud Preview initialized.")
+    log_event("Webcam & Virtual Mouse run locally on desktop.")
+else:
+    log_event("AIRMOUSE AI Web Core initialized.")
+    log_event("Mouse control is STANDBY (Safe mode).")
 
 
 def generate_empty_placeholder_jpeg() -> bytes:
     """Generate futuristic standby image when camera is off."""
     w, h = 640, 480
-    img = np.zeros((h, w, 3), dtype=np.uint8)
-    img[:] = (10, 14, 22)
+    if cv2 is not None:
+        try:
+            img = np.zeros((h, w, 3), dtype=np.uint8)
+            img[:] = (10, 14, 22)
 
-    # Grid
-    for x in range(0, w, 40):
-        cv2.line(img, (x, 0), (x, h), (20, 26, 38), 1)
-    for y in range(0, h, 40):
-        cv2.line(img, (0, y), (w, y), (20, 26, 38), 1)
+            # Cyber Grid
+            for x in range(0, w, 40):
+                cv2.line(img, (x, 0), (x, h), (20, 26, 38), 1)
+            for y in range(0, h, 40):
+                cv2.line(img, (0, y), (w, y), (20, 26, 38), 1)
 
-    cv2.putText(
-        img,
-        "AIRMOUSE AI — SENSORS STANDBY",
-        (w // 2 - 180, h // 2 - 15),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.65,
-        (0, 240, 255),
-        2,
-        cv2.LINE_AA,
-    )
-    cv2.putText(
-        img,
-        "CLICK 'START CAMERA' TO ACTIVATE LIVE STREAM",
-        (w // 2 - 200, h // 2 + 20),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.45,
-        (140, 160, 180),
-        1,
-        cv2.LINE_AA,
-    )
-    _, buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 85])
-    return buf.tobytes()
+            title_txt = "AIRMOUSE AI — CLOUD PREVIEW" if IS_CLOUD_DEPLOYMENT else "AIRMOUSE AI — SENSORS STANDBY"
+            sub_txt = "RUN LOCALLY FOR LIVE WEBCAM & MOUSE" if IS_CLOUD_DEPLOYMENT else "CLICK 'START CAMERA' TO ACTIVATE LIVE STREAM"
+
+            cv2.putText(
+                img,
+                title_txt,
+                (w // 2 - 180, h // 2 - 15),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.65,
+                (0, 240, 255),
+                2,
+                cv2.LINE_AA,
+            )
+            cv2.putText(
+                img,
+                sub_txt,
+                (w // 2 - 200, h // 2 + 20),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.45,
+                (140, 160, 180),
+                1,
+                cv2.LINE_AA,
+            )
+            _, buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 85])
+            return buf.tobytes()
+        except Exception:
+            pass
+
+    # Fallback with Pillow if OpenCV is unavailable in cloud environment
+    try:
+        from PIL import Image, ImageDraw
+        import io
+        img = Image.new("RGB", (w, h), (10, 14, 22))
+        draw = ImageDraw.Draw(img)
+        title_txt = "AIRMOUSE AI — CLOUD PREVIEW" if IS_CLOUD_DEPLOYMENT else "AIRMOUSE AI — SENSORS STANDBY"
+        sub_txt = "RUN LOCALLY FOR LIVE WEBCAM & MOUSE" if IS_CLOUD_DEPLOYMENT else "CLICK 'START CAMERA' TO ACTIVATE LIVE STREAM"
+        draw.text((w // 2 - 140, h // 2 - 15), title_txt, fill=(0, 240, 255))
+        draw.text((w // 2 - 170, h // 2 + 15), sub_txt, fill=(140, 160, 180))
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG")
+        return buf.getvalue()
+    except Exception:
+        # Minimal valid 1x1 black JPEG fallback
+        return b'\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x01\x00`\x00`\x00\x00\xff\xdb\x00C\x00\x08\x06\x06\x07\x06\x05\x08\x07\x07\x07\t\t\x08\n\x0c\x14\r\x0c\x0b\x0b\x0c\x19\x12\x13\x0f\x14\x1d\x1a\x1f\x1e\x1d\x1a\x1c\x1c $.\' ",#\x1c\x1c(7),01444\x1f\'9=82<.342\xff\xc0\x00\x0b\x08\x00\x01\x00\x01\x01\x01\x11\x00\xff\xc4\x00\x1f\x00\x00\x01\x05\x01\x01\x01\x01\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\x01\x02\x03\x04\x05\x06\x07\x08\t\n\x0b\xff\xda\x00\x08\x01\x01\x00\x00?\x00\xbf\x00\xff\xd9'
 
 
 latest_encoded_jpeg = generate_empty_placeholder_jpeg()
@@ -103,7 +182,10 @@ def camera_worker_loop():
     """Background worker continuously running camera capture, inference, and mouse control."""
     global is_camera_active, latest_encoded_jpeg, current_gesture, has_hand_detected, live_fps, live_latency
 
-    last_gesture_enum = GestureType.NO_HAND
+    if tracker is None or recognizer is None:
+        return
+
+    last_gesture_enum = None
 
     while is_camera_active:
         try:
@@ -921,7 +1003,7 @@ def client_watchdog_loop():
     global last_client_ping
     while True:
         time.sleep(3.0)
-        if settings.mouse_control_enabled:
+        if settings.mouse_control_enabled and mouse_ctrl:
             # If no heartbeat received from browser for > 30s (browser window closed/killed)
             if time.time() - last_client_ping > 30.0:
                 settings.mouse_control_enabled = False
@@ -930,8 +1012,9 @@ def client_watchdog_loop():
                 log_event("Browser window closed: Mouse control automatically turned off.")
 
 
-# Start watchdog in background
-threading.Thread(target=client_watchdog_loop, daemon=True).start()
+# Start watchdog in background only when running locally on desktop
+if not IS_CLOUD_DEPLOYMENT:
+    threading.Thread(target=client_watchdog_loop, daemon=True).start()
 
 
 @app.route("/api/status")
@@ -947,6 +1030,7 @@ def api_status():
         "latency": live_latency,
         "auto_float_camera": settings.auto_float_camera,
         "floating_hud_active": (floating_hud_proc is not None and floating_hud_proc.poll() is None),
+        "is_cloud": IS_CLOUD_DEPLOYMENT,
         "logs": list(event_logs),
     })
 
@@ -954,6 +1038,19 @@ def api_status():
 @app.route("/api/toggle_camera", methods=["POST"])
 def api_toggle_camera():
     global is_camera_active, camera_thread, latest_encoded_jpeg
+
+    if IS_CLOUD_DEPLOYMENT:
+        log_event("NOTICE: Hardware camera capture requires local desktop execution.")
+        return jsonify({
+            "success": False,
+            "error": "Webcam streaming requires local desktop execution. Run AIRMOUSE AI locally via start_web.bat or python web_server.py.",
+            "camera_online": False,
+        }), 200
+
+    init_desktop_components()
+    if tracker is None:
+        log_event("ERROR: Hand tracker not available.")
+        return jsonify({"success": False, "error": "Camera tracker not available."}), 500
 
     if not is_camera_active:
         success = tracker.start_camera()
@@ -968,8 +1065,10 @@ def api_toggle_camera():
         return jsonify({"success": True, "camera_online": True})
     else:
         is_camera_active = False
-        tracker.stop_camera()
-        mouse_ctrl.release_all()
+        if tracker:
+            tracker.stop_camera()
+        if mouse_ctrl:
+            mouse_ctrl.release_all()
         close_floating_hud()
         latest_encoded_jpeg = generate_empty_placeholder_jpeg()
         log_event("Webcam stream stopped via Web Dashboard.")
@@ -980,8 +1079,19 @@ def api_toggle_camera():
 def api_toggle_mouse():
     global is_camera_active, camera_thread
 
+    if IS_CLOUD_DEPLOYMENT:
+        log_event("NOTICE: Virtual mouse control operates on your local desktop.")
+        return jsonify({
+            "success": False,
+            "error": "Virtual mouse control operates on your local desktop computer. Run AIRMOUSE AI locally via start_web.bat or python web_server.py.",
+            "mouse_enabled": False,
+            "camera_online": False,
+        }), 200
+
+    init_desktop_components()
+
     # Auto-start camera if not already active
-    if not is_camera_active:
+    if not is_camera_active and tracker:
         success = tracker.start_camera()
         if success:
             is_camera_active = True
@@ -991,14 +1101,16 @@ def api_toggle_mouse():
 
     settings.mouse_control_enabled = not settings.mouse_control_enabled
     if settings.mouse_control_enabled:
-        mouse_ctrl.failsafe_triggered = False
-        mouse_ctrl.has_previous_position = False
+        if mouse_ctrl:
+            mouse_ctrl.failsafe_triggered = False
+            mouse_ctrl.has_previous_position = False
         settings.emergency_stop = False
         log_event("ACTIVE: Mouse control ENABLED across Windows desktop.")
         if settings.auto_float_camera:
             open_floating_hud()
     else:
-        mouse_ctrl.release_all()
+        if mouse_ctrl:
+            mouse_ctrl.release_all()
         log_event("STANDBY: Mouse control DISABLED.")
         close_floating_hud()
 
@@ -1013,7 +1125,8 @@ def api_toggle_mouse():
 def api_toggle_pause():
     settings.is_paused = not settings.is_paused
     if settings.is_paused:
-        mouse_ctrl.release_all()
+        if mouse_ctrl:
+            mouse_ctrl.release_all()
         log_event("System PAUSED via Web Dashboard.")
     else:
         log_event("System RESUMED via Web Dashboard.")
@@ -1024,7 +1137,8 @@ def api_toggle_pause():
 def api_emergency_stop():
     settings.emergency_stop = True
     settings.mouse_control_enabled = False
-    mouse_ctrl.release_all()
+    if mouse_ctrl:
+        mouse_ctrl.release_all()
     close_floating_hud()
     log_event("EMERGENCY STOP TRIGGERED: Mouse control immediately disabled.")
     return jsonify({"success": True, "mouse_enabled": False})
@@ -1057,6 +1171,8 @@ def api_current_frame():
 
 @app.route("/api/open_floating_window", methods=["POST"])
 def api_open_floating_window():
+    if IS_CLOUD_DEPLOYMENT:
+        return jsonify({"success": False, "error": "Always-On-Top floating window is a desktop feature."}), 200
     success = open_floating_hud()
     return jsonify({"success": success})
 
@@ -1071,7 +1187,8 @@ def api_close_floating_window():
 def api_client_exit():
     """Invoked when user closes the website window: turns off mouse & closes floating camera."""
     settings.mouse_control_enabled = False
-    mouse_ctrl.release_all()
+    if mouse_ctrl:
+        mouse_ctrl.release_all()
     close_floating_hud()
     log_event("Website window closed: Mouse control and floating camera turned off.")
     return jsonify({"success": True})
