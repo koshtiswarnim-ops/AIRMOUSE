@@ -721,6 +721,9 @@ HTML_TEMPLATE = """
                 </div>
 
                 <div class="switches-grid">
+                    <label class="switch-label" style="grid-column: span 2; color: #ff5252; font-weight: 600;">
+                        <input type="checkbox" id="sw-cursor-dot" checked onchange="updateSettings()"> 🔴/🔵 Cursor Dot Halo (Red on move, Blue on click)
+                    </label>
                     <label class="switch-label" style="grid-column: span 2; color: #38bdf8; font-weight: 600;">
                         <input type="checkbox" id="sw-auto-float" checked onchange="updateSettings()"> ⚡ Auto-Show Camera on Desktop when leaving website
                     </label>
@@ -873,6 +876,7 @@ HTML_TEMPLATE = """
                 enable_drag_and_drop: document.getElementById('sw-drag').checked,
                 enable_scrolling: document.getElementById('sw-scroll').checked,
                 auto_float_camera: document.getElementById('sw-auto-float').checked,
+                show_cursor_dot: document.getElementById('sw-cursor-dot').checked,
             };
 
             await fetch('/api/settings', {
@@ -1029,6 +1033,7 @@ def api_status():
         "fps": live_fps,
         "latency": live_latency,
         "auto_float_camera": settings.auto_float_camera,
+        "show_cursor_dot": getattr(settings, "show_cursor_dot", True),
         "floating_hud_active": (floating_hud_proc is not None and floating_hud_proc.poll() is None),
         "is_cloud": IS_CLOUD_DEPLOYMENT,
         "logs": list(event_logs),

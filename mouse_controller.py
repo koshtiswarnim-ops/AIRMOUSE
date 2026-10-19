@@ -102,6 +102,15 @@ class MouseController:
 
         self.failsafe_triggered = False
 
+        # Real-time Cursor Dot Halo Overlay (Red on move, Blue on click)
+        self.cursor_overlay = None
+        if self.is_windows:
+            try:
+                from cursor_overlay import get_cursor_overlay
+                self.cursor_overlay = get_cursor_overlay()
+            except Exception as e:
+                logger.warning(f"Cursor overlay not initialized: {e}")
+
     def _attach_to_default_desktop(self) -> None:
         """Attach current thread to interactive user desktop (WinSta0\\Default)."""
         if self.is_windows and self.user32:
@@ -135,6 +144,13 @@ class MouseController:
                     pass
             self.is_left_down = False
             self.anchor_pos = None
+
+        if self.cursor_overlay:
+            try:
+                self.cursor_overlay.set_clicking(False)
+                self.cursor_overlay.hide()
+            except Exception:
+                pass
 
     def map_coordinates(self, norm_x: float, norm_y: float) -> Tuple[int, int]:
         """Map normalized hand coordinates to desktop resolution with 1€ adaptive smoothing."""
@@ -210,6 +226,8 @@ class MouseController:
                         self.user32.mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0)
                     self.is_left_down = False
                     self.anchor_pos = None
+                    if self.cursor_overlay:
+                        self.cursor_overlay.set_clicking(False)
                     if on_event_cb:
                         on_event_cb("Drag & Drop: Released")
 
@@ -241,6 +259,9 @@ class MouseController:
 
                 if self.is_windows and self.user32:
                     self.user32.SetCursorPos(screen_x, screen_y)
+                    # Update real-time Red/Blue cursor halo
+                    if self.cursor_overlay and getattr(self.settings, "show_cursor_dot", True):
+                        self.cursor_overlay.update_position(screen_x, screen_y, visible=True)
 
             # 3. Left-Click and Double-Tap Detection
             if self.settings.enable_left_click and meta.get("trigger_click", False):
@@ -267,6 +288,11 @@ class MouseController:
                         self.user32.mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0)
                         time.sleep(0.035)
                         self.user32.mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0)
+
+                    # Turn cursor halo BLUE for double tap
+                    if self.cursor_overlay and getattr(self.settings, "show_cursor_dot", True):
+                        self.cursor_overlay.update_position(screen_x, screen_y, visible=True)
+                        self.cursor_overlay.flash_click(0.40)
 
                     # Reset double-tap state
                     self.last_tap_time = 0.0
@@ -301,6 +327,11 @@ class MouseController:
                         time.sleep(0.035)
                         self.user32.mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0)
 
+                    # Turn cursor halo BLUE for single click
+                    if self.cursor_overlay and getattr(self.settings, "show_cursor_dot", True):
+                        self.cursor_overlay.update_position(screen_x, screen_y, visible=True)
+                        self.cursor_overlay.flash_click(0.32)
+
                     if on_event_cb:
                         try:
                             on_event_cb("Single Click Executed (Option Clicked)")
@@ -313,6 +344,8 @@ class MouseController:
                     if self.is_windows and self.user32:
                         self.user32.mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0)
                     self.is_left_down = True
+                    if self.cursor_overlay:
+                        self.cursor_overlay.set_clicking(True)
                     if on_event_cb:
                         on_event_cb("Drag & Drop: Holding Left Button")
 

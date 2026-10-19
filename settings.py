@@ -52,6 +52,7 @@ class AppSettings:
     show_hud: bool = True
     hud_cyber_mode: bool = True
     auto_float_camera: bool = True  # Automatically show floating camera window on desktop when outside website
+    show_cursor_dot: bool = True  # Floating red/blue cursor dot halo over mouse pointer
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert settings to dictionary."""

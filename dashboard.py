@@ -480,6 +480,19 @@ class AirMouseDashboard(ctk.CTk):
         self.sw_scroll.select() if self.settings.enable_scrolling else self.sw_scroll.deselect()
         self.sw_scroll.pack(side="right", expand=True)
 
+        # Row 3 switches
+        r3 = ctk.CTkFrame(switch_frame, fg_color="transparent")
+        r3.pack(fill="x", pady=2)
+
+        self.sw_dot = ctk.CTkSwitch(
+            r3,
+            text="🔴/🔵 Cursor Halo",
+            font=ctk.CTkFont(family="Segoe UI", size=11),
+            command=lambda: self._toggle_setting("show_cursor_dot", self.sw_dot),
+        )
+        self.sw_dot.select() if getattr(self.settings, "show_cursor_dot", True) else self.sw_dot.deselect()
+        self.sw_dot.pack(side="left", expand=True)
+
     def _build_activity_card(self, parent: ctk.CTkFrame) -> None:
         """Activity log displaying system events."""
         card = ctk.CTkFrame(
